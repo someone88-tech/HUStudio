@@ -1,0 +1,30 @@
+# Unity local state
+Library/
+Temp/
+Obj/
+Logs/
+UserSettings/
+MemoryCaptures/
+Recordings/
+.vs/
+.idea/
+
+# Generated builds and machine-specific exporter settings
+/Build/
+/WebGL/
+/ProjectSettings/HUStudioExportSettings.json
+/ProjectSettings/HUStudioExportSettings.asset
+*.hap
+*.hsp
+*.app
+*.p12
+*.jks
+*.keystore
+*.csr
+*.cer
+*.p7b
+
+# OS and editor state
+.DS_Store
+Thumbs.db
+*.tmp

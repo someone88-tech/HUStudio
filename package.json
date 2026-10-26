@@ -1,0 +1,26 @@
+{
+  "name": "com.hustudio.harmonyos",
+  "version": "0.1.1",
+  "displayName": "HUStudio HarmonyOS Unity SDK",
+  "description": "Unity WebGL export workflow for HarmonyOS.",
+  "keywords": [
+    "HarmonyOS",
+    "WebGL",
+    "HUStudio"
+  ],
+  "author": {
+    "name": "HUStudio"
+  },
+  "documentationUrl": "https://github.com/someone88-tech/HUStudio/blob/main/Documentation~/GettingStarted.md",
+  "licensesUrl": "https://github.com/someone88-tech/HUStudio/blob/main/LICENSE.md",
+  "dependencies": {
+    "com.unity.ugui": "1.0.0"
+  },
+  "samples": [
+    {
+      "displayName": "Quick Start",
+      "description": "HarmonyOS runtime and bridge demonstration scene.",
+      "path": "Samples~/QuickStart"
+    }
+  ]
+}

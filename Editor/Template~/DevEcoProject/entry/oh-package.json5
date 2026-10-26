@@ -1,0 +1,11 @@
+{
+  name: 'entry',
+  version: '1.0.0',
+  description: 'HUStudio HarmonyOS application',
+  main: '',
+  author: '',
+  license: 'MIT',
+  dependencies: {
+    'libufhn.so': 'file:./types/libufhn'
+  }
+}
