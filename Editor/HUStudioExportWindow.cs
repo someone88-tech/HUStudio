@@ -85,6 +85,8 @@ namespace HUStudio.HarmonyOS.Editor
         private string status = "";
         private bool showAdvancedPaths;
         private bool showSigning;
+        private string[] connectedDevices = new string[0];
+        private int selectedDevice;
 
         [MenuItem("HarmonyOS/环境与导出...")]
         public static void Open()
@@ -252,6 +254,73 @@ namespace HUStudio.HarmonyOS.Editor
                     finally { EditorUtility.ClearProgressBar(); }
                 }
             }
+            EditorGUILayout.Space(10);
+            EditorGUILayout.LabelField("测试包：调试构建与真机部署", EditorStyles.boldLabel);
+            EditorGUILayout.HelpBox("按顺序完成：连接手机并授权 USB 调试 → 检测测试签名 → 构建、安装并启动。此流程独立于正式签名导出。", MessageType.Info);
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(connectedDevices.Length == 0 ? "未检测到设备" : "已连接 " + connectedDevices.Length + " 台设备",
+                EditorStyles.wordWrappedLabel);
+            if (GUILayout.Button("刷新设备", GUILayout.Width(100))) RefreshDevices();
+            EditorGUILayout.EndHorizontal();
+            if (connectedDevices.Length > 0)
+            {
+                selectedDevice = Mathf.Clamp(selectedDevice, 0, connectedDevices.Length - 1);
+                selectedDevice = EditorGUILayout.Popup("目标设备", selectedDevice, connectedDevices);
+            }
+            else EditorGUILayout.HelpBox("请连接鸿蒙手机，开启开发者选项和 USB 调试，并在手机上允许此电脑调试，然后点击“刷新设备”。", MessageType.Info);
+            string installSigningReason = "";
+            bool autoSigningReady = HUStudioSigning.IsAutoSigningReadyFor(settings.lastProjectDirectory);
+            bool installSigningReady = autoSigningReady || HUStudioSigning.Validate(out installSigningReason);
+            if (autoSigningReady) installSigningReason = "DevEco 自动签名资料已就绪。";
+            EditorGUILayout.BeginHorizontal();
+            using (new EditorGUI.DisabledScope(!toolchainReady || string.IsNullOrEmpty(settings.lastProjectDirectory)))
+            {
+                if (GUILayout.Button("自动检测测试签名")) DetectTestSigning(settings);
+            }
+            using (new EditorGUI.DisabledScope(!toolchainReady || !webglReady))
+            {
+                if (GUILayout.Button("首次设置：在 DevEco 中打开工程"))
+                {
+                    try
+                    {
+                        if (!HUStudioExportPipeline.IsProjectReady(settings))
+                            HUStudioExportPipeline.GenerateProject(settings);
+                        HUStudioToolchain.OpenProjectInDevEco(settings.lastProjectDirectory);
+                        status = "已在 DevEco 打开工程。完成自动签名后，返回此处点击“自动检测测试签名”。";
+                    }
+                    catch (Exception error) { Report(error); }
+                }
+            }
+            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.HelpBox(installSigningReady
+                ? "测试签名已就绪，可构建并安装。"
+                : "首次配置步骤：\n1. 点击“首次设置”打开工程；在 DevEco 右上角点击“登录”，登录华为开发者账号。\n2. 进入“文件 > 项目结构 > 项目 > 签名配置”。\n3. 选择 HarmonyOS 签名配置，勾选“自动生成签名”，点击“确定”并等待签名完成。\n4. 回到 Unity 点击“自动检测测试签名”。若仍未识别，确认 DevEco 的签名配置已写入当前生成工程的 build-profile.json5。\n\n当前状态：" + installSigningReason,
+                installSigningReady ? MessageType.Info : MessageType.Warning);
+            using (new EditorGUI.DisabledScope(!toolchainReady || !webglReady ||
+                connectedDevices.Length == 0 || !installSigningReady))
+            {
+                if (GUILayout.Button("构建并安装测试 HAP", GUILayout.Height(34)))
+                {
+                    try
+                    {
+                        EditorUtility.DisplayProgressBar("HUStudio", "正在构建、签名并安装...", 0.5f);
+                        if (autoSigningReady && !HUStudioExportPipeline.IsProjectReady(settings))
+                            throw new InvalidOperationException("鸿蒙工程已变化，请重新生成工程并在 DevEco 配置测试签名。");
+                        if (!HUStudioExportPipeline.IsProjectReady(settings))
+                            HUStudioExportPipeline.GenerateProject(settings);
+                        string signedHap = autoSigningReady
+                            ? HUStudioToolchain.BuildAutoSignedHap(settings.lastProjectDirectory, settings.outputDirectory)
+                            : HUStudioSigning.SignHap(HUStudioToolchain.BuildUnsignedHap(
+                                settings.lastProjectDirectory, settings.outputDirectory));
+                        string device = connectedDevices[selectedDevice];
+                        string result = HUStudioToolchain.InstallHap(device, signedHap);
+                        string launch = HUStudioToolchain.LaunchApp(device, settings.bundleName);
+                        status = "测试包已安装并启动于 " + device + "。" + result + " " + launch;
+                    }
+                    catch (Exception error) { Report(error); }
+                    finally { EditorUtility.ClearProgressBar(); }
+                }
+            }
             showSigning = EditorGUILayout.Foldout(showSigning, "签名设置", true);
             if (showSigning)
             {
@@ -291,6 +360,11 @@ namespace HUStudio.HarmonyOS.Editor
             EditorGUILayout.EndScrollView();
         }
 
+        private void OnEnable()
+        {
+            if (HUStudioToolchain.IsVerified) RefreshDevices();
+        }
+
         private static void DrawPath(string label, Func<string> get, Action<string> set, bool folder)
         {
             EditorGUILayout.BeginHorizontal();
@@ -306,6 +380,31 @@ namespace HUStudio.HarmonyOS.Editor
                 if (!string.IsNullOrEmpty(selected)) set(selected);
             }
             EditorGUILayout.EndHorizontal();
+        }
+
+        private void RefreshDevices()
+        {
+            try
+            {
+                connectedDevices = HUStudioToolchain.ListDevices();
+                selectedDevice = Mathf.Clamp(selectedDevice, 0, Math.Max(0, connectedDevices.Length - 1));
+                status = connectedDevices.Length == 0 ? "未发现设备；请检查 USB 调试授权和连接线。" :
+                    "发现设备：" + string.Join(", ", connectedDevices);
+            }
+            catch (Exception error) { connectedDevices = new string[0]; Report(error); }
+        }
+
+        private void DetectTestSigning(HUStudioExportSettings settings)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(settings.lastProjectDirectory))
+                    throw new InvalidOperationException("请先生成鸿蒙工程。");
+                string reason;
+                bool ready = HUStudioSigning.TryLoadAutoSigningFromProject(settings.lastProjectDirectory, out reason);
+                status = ready ? reason : "未检测到可用的 DevEco 自动调试签名：" + reason;
+            }
+            catch (Exception error) { Report(error); }
         }
 
         private void DrawProjectImage(string label, string guid, Action<string> setGuid, string description)
@@ -648,6 +747,8 @@ namespace HUStudio.HarmonyOS.Editor
                 CopyBranding(stage, settings);
                 if (!File.Exists(Path.Combine(entry, "libs", "arm64-v8a", "libufhn.so")))
                     throw new InvalidDataException("DevEco 模板缺少 libufhn.so。");
+                if (!File.Exists(Path.Combine(entry, "libs", "arm64-v8a", "libc++_shared.so")))
+                    throw new InvalidDataException("DevEco 模板缺少 libc++_shared.so。");
                 string rawfile = Path.Combine(entry, "src", "main", "resources", "rawfile", "unity_webgl");
                 CopyWebGL(settings.lastWebGLDirectory, rawfile);
                 string mainPath = Path.Combine(rawfile, "main.js");
@@ -700,8 +801,12 @@ namespace HUStudio.HarmonyOS.Editor
             string library = Path.Combine(output, "entry", "libs", "arm64-v8a", "libufhn.so");
             if (!File.Exists(library) || new FileInfo(library).Length < 1000000)
                 throw new InvalidDataException("DevEco template is missing libufhn.so.");
+            string cppRuntime = Path.Combine(output, "entry", "libs", "arm64-v8a", "libc++_shared.so");
+            if (!File.Exists(cppRuntime) || new FileInfo(cppRuntime).Length < 1000000)
+                throw new InvalidDataException("DevEco template is missing libc++_shared.so.");
             Debug.Log("[HUStudio] Bundled resources verified. Template=" + template.Length +
-                      ", libufhn.so=" + new FileInfo(library).Length + ", main.js=" + main.Length);
+                      ", libufhn.so=" + new FileInfo(library).Length +
+                      ", libc++_shared.so=" + new FileInfo(cppRuntime).Length + ", main.js=" + main.Length);
         }
 
         internal static void SmokeProject()

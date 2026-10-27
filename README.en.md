@@ -7,8 +7,8 @@ Export a Unity WebGL scene as an editable DevEco project or build a HarmonyOS HA
 | Method | Action | Sample |
 | --- | --- | --- |
 | Git / UPM | In Unity, open **Window > Package Manager > + > Add package from git URL** and enter `https://github.com/someone88-tech/HUStudio.git` | Import **Quick Start** in Package Manager |
-| unitypackage | Download `Releases~/0.1.1/HUStudioUnitySDK-0.1.1.unitypackage`, then use **Assets > Import Package > Custom Package** | Quick Start is included on import |
-| Complete Unity project | Extract `Releases~/0.1.1/HUStudioUnitySDK-0.1.1-SampleProject.zip` and open it with Unity Hub | Ready to inspect and modify |
+| unitypackage | Download `Releases~/0.1.2/HUStudioUnitySDK-0.1.2.unitypackage`, then use **Assets > Import Package > Custom Package** | Quick Start is included on import |
+| Complete Unity project | Extract `Releases~/0.1.2/HUStudioUnitySDK-0.1.2-SampleProject.zip` and open it with Unity Hub | Ready to inspect and modify |
 
 Git installation requires a local Git client. Use only one installation method per Unity project to avoid duplicate script assemblies.
 

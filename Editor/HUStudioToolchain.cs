@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -155,6 +156,16 @@ namespace HUStudio.HarmonyOS.Editor
 
         internal static string BuildUnsignedHap(string project, string outputRoot)
         {
+            return BuildHap(project, outputRoot, false);
+        }
+
+        internal static string BuildAutoSignedHap(string project, string outputRoot)
+        {
+            return BuildHap(project, outputRoot, true);
+        }
+
+        private static string BuildHap(string project, string outputRoot, bool signed)
+        {
             string reason;
             if (!Validate(out reason)) throw new InvalidOperationException("环境检查未通过: " + reason);
             if (!IsVerified) throw new InvalidOperationException("请先在导出窗口点击“检测环境”。");
@@ -201,15 +212,91 @@ namespace HUStudio.HarmonyOS.Editor
             File.WriteAllText(log, output.ToString(), new UTF8Encoding(false));
             if (exitCode != 0) throw new InvalidOperationException("HAP 构建失败。日志: " + log);
             string outputs = Path.Combine(project, "entry", "build", "default", "outputs");
+            string suffix = signed ? "-signed.hap" : "-unsigned.hap";
             string hap = Directory.GetFiles(outputs, "*.hap", SearchOption.AllDirectories)
+                .Where(path => path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
-            if (hap == null) throw new FileNotFoundException("Hvigor 未生成 HAP: " + outputs);
+            if (hap == null) throw new FileNotFoundException("Hvigor 未生成" + (signed ? "已" : "未") + "签名 HAP: " + outputs);
             string destination = Path.Combine(outputRoot, "HAP");
             Directory.CreateDirectory(destination);
-            string target = Path.Combine(destination, "HUStudio-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-unsigned.hap");
+            string target = Path.Combine(destination, "HUStudio-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + suffix);
             File.Copy(hap, target, false);
-            Debug.Log("[HUStudio] Unsigned HAP: " + target);
+            Debug.Log("[HUStudio] HAP: " + target);
             return target;
+        }
+
+        internal static string HdcExe
+        {
+            get { return Path.Combine(SdkRoot, "default", "openharmony", "toolchains", "hdc.exe"); }
+        }
+
+        internal static string[] ListDevices()
+        {
+            string reason;
+            if (!Validate(out reason) || !IsVerified)
+                throw new InvalidOperationException("请先完成 DevEco 环境检测。" + (string.IsNullOrEmpty(reason) ? "" : " " + reason));
+            if (!File.Exists(HdcExe)) throw new FileNotFoundException("SDK 中未找到 hdc 设备工具。", HdcExe);
+            string output = RunHdc(new[] { "list", "targets" }, 15000);
+            return output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Trim())
+                .Where(line => !string.IsNullOrEmpty(line) && line != "[Empty]")
+                .Where(line => !line.StartsWith("[", StringComparison.Ordinal))
+                .ToArray();
+        }
+
+        internal static string InstallHap(string device, string hap)
+        {
+            if (string.IsNullOrWhiteSpace(device)) throw new ArgumentException("请选择已连接的设备。", "device");
+            if (!File.Exists(hap)) throw new FileNotFoundException("HAP 文件不存在。", hap);
+            // Normalize mixed separators from Unity's persisted output path. hdc
+            // treats a Windows drive path containing forward slashes as relative.
+            string localHap = Path.GetFullPath(hap).Replace('/', '\\');
+            string output = RunHdc(new[] { "-t", device, "install", "-r", localHap }, 120000);
+            if (output.IndexOf("install successfully", StringComparison.OrdinalIgnoreCase) < 0 &&
+                output.IndexOf("success", StringComparison.OrdinalIgnoreCase) < 0)
+                throw new InvalidOperationException("设备未确认安装成功。hdc 输出：" + output);
+            return output.Trim();
+        }
+
+        internal static string LaunchApp(string device, string bundleName)
+        {
+            if (string.IsNullOrWhiteSpace(bundleName)) throw new ArgumentException("Bundle Name 不能为空。", "bundleName");
+            return RunHdc(new[] { "-t", device, "shell", "aa", "start", "-b", bundleName, "-a", "EntryAbility" }, 30000).Trim();
+        }
+
+        internal static void OpenProjectInDevEco(string projectDirectory)
+        {
+            string executable = Path.Combine(StudioRoot, "bin", "devecostudio64.exe");
+            if (!File.Exists(executable)) throw new FileNotFoundException("未找到 DevEco Studio 启动程序。", executable);
+            if (!Directory.Exists(projectDirectory)) throw new DirectoryNotFoundException("鸿蒙工程不存在：" + projectDirectory);
+            var start = new ProcessStartInfo { FileName = executable, Arguments = QuoteArgument(projectDirectory),
+                UseShellExecute = false, CreateNoWindow = true };
+            Process.Start(start);
+        }
+
+        private static string RunHdc(IEnumerable<string> arguments, int timeoutMs)
+        {
+            var start = new ProcessStartInfo { FileName = HdcExe, UseShellExecute = false,
+                RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+            start.Arguments = string.Join(" ", arguments.Select(QuoteArgument));
+            using (var process = Process.Start(start))
+            {
+                var stdout = new StringBuilder();
+                var stderr = new StringBuilder();
+                process.OutputDataReceived += (sender, args) => { if (args.Data != null) lock (stdout) stdout.AppendLine(args.Data); };
+                process.ErrorDataReceived += (sender, args) => { if (args.Data != null) lock (stderr) stderr.AppendLine(args.Data); };
+                process.BeginOutputReadLine(); process.BeginErrorReadLine();
+                if (!process.WaitForExit(timeoutMs)) { process.Kill(); throw new TimeoutException("hdc 操作超时。"); }
+                process.WaitForExit();
+                string output = stdout.ToString() + stderr.ToString();
+                if (process.ExitCode != 0) throw new InvalidOperationException("hdc 操作失败：" + output.Trim());
+                return output;
+            }
+        }
+
+        private static string QuoteArgument(string value)
+        {
+            return "\"" + (value ?? "").Replace("\"", "\\\"") + "\"";
         }
     }
 }

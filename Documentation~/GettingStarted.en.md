@@ -12,8 +12,8 @@
 Choose one method:
 
 1. **Git / UPM:** In Unity, open **Window > Package Manager**, select **+ > Add package from git URL**, and enter `https://github.com/someone88-tech/HUStudio.git`. Git must be installed locally. Import **Quick Start** from the package's **Samples** tab.
-2. **unitypackage:** Download `HUStudioUnitySDK-0.1.1.unitypackage` from `Releases~/0.1.1`, then use **Assets > Import Package > Custom Package**. The sample appears under `Assets/HUStudioUnitySDK/Samples/QuickStart`.
-3. **Complete project:** Extract `HUStudioUnitySDK-0.1.1-SampleProject.zip` and open the extracted Unity project folder in Unity Hub. It includes the package and Quick Start.
+2. **unitypackage:** Download `HUStudioUnitySDK-0.1.2.unitypackage` from `Releases~/0.1.2`, then use **Assets > Import Package > Custom Package**. The sample appears under `Assets/HUStudioUnitySDK/Samples/QuickStart`.
+3. **Complete project:** Extract `HUStudioUnitySDK-0.1.2-SampleProject.zip` and open the extracted Unity project folder in Unity Hub. It includes the package and Quick Start.
 
 Do not import the same version of the `.unitypackage` into a project that already has the UPM package; the assemblies would be compiled twice.
 
@@ -43,6 +43,12 @@ Enter the application name, Bundle Name, version name, and version code. Pick PN
 
 Regenerate the DevEco project after changing icons, background color, app settings, or WebGL output. The selected output folder keeps the project, HAP, and build logs.
 
+### Test on a device
+
+In **测试包：调试构建与真机部署** (Test build and device deployment), click **刷新设备** (Refresh devices). Enable USB debugging and authorize the computer on the phone, then select the device. For the first test, click **首次设置：在 DevEco 中打开工程** (Open project in DevEco), configure automatic debug signing in DevEco, return to Unity, and click **自动检测测试签名** (Detect test signing). You can also use the manual signing fields below. Finally, click **构建并安装测试 HAP** (Build and install test HAP).
+
+If you regenerate the DevEco project, configure and detect automatic signing again in the new project. An unsigned HAP is never treated as a signed test build.
+
 ## Outputs and saved settings
 
 - Hvigor log: `HUStudio-hvigor.log` in the generated project root.
@@ -59,6 +65,7 @@ Regenerate the DevEco project after changing icons, background color, app settin
 | WebGL build unavailable | Install WebGL Build Support for this Unity version and enable at least one scene in Build Settings. |
 | Generated project is stale | Rebuild WebGL or regenerate the project after changing scenes, assets, app settings, or images. |
 | Signing fails | Verify that the `.p12`, alias, passwords, `.cer`, `.p7b`, and Bundle Name match. |
+| Black screen after installation with `libc++_shared.so` missing in the device log | Update to 0.1.2 or refresh the Git package, then regenerate the DevEco project and HAP. Existing generated projects are not updated automatically. |
 
 ## License
 

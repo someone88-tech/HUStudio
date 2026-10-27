@@ -7,8 +7,8 @@
 | 方式 | 操作 | Sample |
 | --- | --- | --- |
 | Git / UPM | Unity **Window > Package Manager > + > Add package from git URL**，输入 `https://github.com/someone88-tech/HUStudio.git` | 在 Package Manager 导入 **Quick Start** |
-| unitypackage | 下载 `Releases~/0.1.1/HUStudioUnitySDK-0.1.1.unitypackage`，在 Unity 中 **Assets > Import Package > Custom Package** | 导入时已包含 Quick Start |
-| 完整 Unity 工程 | 解压 `Releases~/0.1.1/HUStudioUnitySDK-0.1.1-SampleProject.zip`，用 Unity Hub 打开 | 可直接查看和修改 |
+| unitypackage | 下载 `Releases~/0.1.2/HUStudioUnitySDK-0.1.2.unitypackage`，在 Unity 中 **Assets > Import Package > Custom Package** | 导入时已包含 Quick Start |
+| 完整 Unity 工程 | 解压 `Releases~/0.1.2/HUStudioUnitySDK-0.1.2-SampleProject.zip`，用 Unity Hub 打开 | 可直接查看和修改 |
 
 Git 安装要求本机已安装 Git。请在同一工程中只使用一种安装方式，以免脚本重复编译。
 

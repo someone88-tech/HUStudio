@@ -1,6 +1,6 @@
 {
   "name": "com.hustudio.harmonyos",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "displayName": "HUStudio HarmonyOS Unity SDK",
   "description": "Unity WebGL export workflow for HarmonyOS.",
   "keywords": [

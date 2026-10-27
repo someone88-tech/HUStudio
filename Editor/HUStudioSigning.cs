@@ -17,6 +17,15 @@ namespace HUStudio.HarmonyOS.Editor
         private const string PasswordEnvironmentName = "HUSTUDIO_KEYSTORE_PASSWORD";
         private static string storePassword = "";
         private static string keyPassword = "";
+        private static string autoSigningProject = "";
+        internal static bool AutoSigningReady { get; private set; }
+
+        internal static bool IsAutoSigningReadyFor(string projectDirectory)
+        {
+            return AutoSigningReady && !string.IsNullOrWhiteSpace(projectDirectory) &&
+                string.Equals(autoSigningProject, Path.GetFullPath(projectDirectory), StringComparison.OrdinalIgnoreCase) &&
+                File.Exists(Path.Combine(projectDirectory, "build-profile.json5"));
+        }
 
         internal static string KeyStorePath
         {
@@ -55,6 +64,110 @@ namespace HUStudio.HarmonyOS.Editor
             { reason = "选择与 Bundle Name 对应的 Profile (.p7b)。"; return false; }
             reason = "";
             return true;
+        }
+
+        internal static bool TryLoadAutoSigningFromProject(string projectDirectory, out string reason)
+        {
+            AutoSigningReady = false;
+            autoSigningProject = "";
+            string buildProfile = Path.Combine(projectDirectory ?? "", "build-profile.json5");
+            if (!File.Exists(buildProfile))
+            { reason = "当前鸿蒙工程中没有 build-profile.json5，请先生成鸿蒙工程。"; return false; }
+            string source = File.ReadAllText(buildProfile);
+            Match section = Regex.Match(source, @"['""]?signingConfigs['""]?\s*:\s*\[(?<items>[\s\S]*?)\]",
+                RegexOptions.CultureInvariant);
+            if (!section.Success)
+            { reason = "工程尚未配置自动签名。请在 DevEco 中进入“文件 > 项目结构 > 项目 > 签名配置”，启用自动生成签名并保存。"; return false; }
+
+            string items = section.Groups["items"].Value;
+            string config = items;
+            string selectedName = "";
+            Match selected = Regex.Match(source, @"['""]?signingConfig['""]?\s*:\s*['""](?<name>[^'""]+)['""]");
+            if (selected.Success) selectedName = selected.Groups["name"].Value;
+            if (!string.IsNullOrEmpty(selectedName))
+            {
+                foreach (string candidate in ExtractTopLevelObjects(items))
+                {
+                    string name = ReadJson5String(candidate, "name");
+                    if (string.Equals(name, selectedName, StringComparison.OrdinalIgnoreCase))
+                    { config = candidate; break; }
+                }
+            }
+
+            string store = ReadJson5String(config, "storeFile");
+            string cert = ReadJson5String(config, "certpath");
+            string profile = ReadJson5String(config, "profile");
+            string alias = ReadJson5String(config, "keyAlias");
+            if (string.IsNullOrEmpty(store) || string.IsNullOrEmpty(cert) || string.IsNullOrEmpty(profile))
+            { reason = "已找到签名配置，但缺少 .p12、.cer 或 .p7b 路径。请在 DevEco 中勾选自动生成签名并点击 OK，等待签名完成后重试。"; return false; }
+
+            store = ResolveSigningPath(projectDirectory, store);
+            cert = ResolveSigningPath(projectDirectory, cert);
+            profile = ResolveSigningPath(projectDirectory, profile);
+            if (!File.Exists(store) || !File.Exists(cert) || !File.Exists(profile))
+            { reason = "build-profile.json5 中有签名配置，但对应的 .p12/.cer/.p7b 文件未全部找到。请在 DevEco 等待自动签名完成，再重试检测。"; return false; }
+
+            string configName = ReadJson5String(config, "name");
+            if (string.IsNullOrEmpty(configName)) configName = selectedName;
+            if (string.IsNullOrEmpty(configName)) configName = "default";
+            string updatedSource;
+            EnsureProductSigningConfig(source, configName, out updatedSource);
+            source = updatedSource;
+            File.WriteAllText(buildProfile, source, new UTF8Encoding(false));
+
+            KeyStorePath = store; CertificatePath = cert; ProfilePath = profile;
+            KeyAlias = alias;
+            autoSigningProject = Path.GetFullPath(projectDirectory);
+            AutoSigningReady = true;
+            reason = "已读取 DevEco 自动调试签名配置并关联到当前构建产品。";
+            return true;
+        }
+
+        private static void EnsureProductSigningConfig(string source, string configName, out string updated)
+        {
+            updated = source;
+            Match products = Regex.Match(source, @"\bproducts\s*:\s*\[(?<items>[\s\S]*?)\]", RegexOptions.CultureInvariant);
+            if (!products.Success) return;
+            string firstProduct = ExtractTopLevelObjects(products.Groups["items"].Value).FirstOrDefault();
+            if (string.IsNullOrEmpty(firstProduct) || Regex.IsMatch(firstProduct, @"['""]?signingConfig['""]?\s*:")) return;
+            int insertAt = source.IndexOf(firstProduct, products.Index, StringComparison.Ordinal);
+            if (insertAt < 0) return;
+            updated = source.Insert(insertAt + 1, "\n        signingConfig: '" + configName.Replace("'", "") + "',");
+        }
+
+        private static string ResolveSigningPath(string projectDirectory, string path)
+        {
+            path = path.Replace("\\\\", "\\").Replace("\\\"", "\"");
+            return Path.IsPathRooted(path) ? path : Path.GetFullPath(Path.Combine(projectDirectory, path));
+        }
+
+        private static string ReadJson5String(string source, string key)
+        {
+            Match match = Regex.Match(source ?? "", @"(?:^|[,{\s])['""]?" + Regex.Escape(key) + @"['""]?" +
+                @"\s*:\s*(['""])(?<value>(?:\\.|(?!\1)[^\\])*)\1", RegexOptions.Singleline);
+            if (!match.Success) return "";
+            return match.Groups["value"].Value.Replace("\\\\", "\\").Replace("\\\"", "\"");
+        }
+
+        private static IEnumerable<string> ExtractTopLevelObjects(string source)
+        {
+            int depth = 0, start = -1;
+            char quote = '\0'; bool escaped = false;
+            for (int i = 0; i < source.Length; i++)
+            {
+                char c = source[i];
+                if (quote != '\0')
+                {
+                    if (escaped) escaped = false;
+                    else if (c == '\\') escaped = true;
+                    else if (c == quote) quote = '\0';
+                    continue;
+                }
+                if (c == '\'' || c == '"') { quote = c; continue; }
+                if (c == '{') { if (depth++ == 0) start = i; }
+                else if (c == '}' && depth > 0 && --depth == 0 && start >= 0)
+                    yield return source.Substring(start, i - start + 1);
+            }
         }
 
         internal static string[] GenerateKeyAndCsr(string folder, string alias, string commonName, string password)
