@@ -26,9 +26,8 @@ namespace HUStudio.HarmonyOS.Editor
             {
                 if (loaded != null) return loaded;
                 string path = SettingsPath;
-                loaded = File.Exists(path)
-                    ? JsonUtility.FromJson<HUStudioExportSettings>(File.ReadAllText(path))
-                    : new HUStudioExportSettings();
+                loaded = new HUStudioExportSettings();
+                if (File.Exists(path)) JsonUtility.FromJsonOverwrite(File.ReadAllText(path), loaded);
                 if (loaded == null) loaded = new HUStudioExportSettings();
                 if (string.IsNullOrEmpty(loaded.splashBackgroundColor))
                     loaded.splashBackgroundColor = "#FFFFFF";
@@ -43,6 +42,9 @@ namespace HUStudio.HarmonyOS.Editor
         public string iconGuid = "";
         public string splashGuid = "";
         public string splashBackgroundColor = "#FFFFFF";
+        public int splashDisplayMode = 0;
+        public float splashDuration = 2.0f;
+        public float splashFadeDuration = 0.5f;
         public string[] scenePaths = new string[0];
         public string lastWebGLDirectory = "";
         public string lastProjectDirectory = "";
@@ -76,6 +78,9 @@ namespace HUStudio.HarmonyOS.Editor
         public string iconGuid;
         public string splashGuid;
         public string splashBackgroundColor;
+        public int splashDisplayMode;
+        public float splashDuration;
+        public float splashFadeDuration;
     }
 
     public sealed class HUStudioExportWindow : EditorWindow
@@ -83,15 +88,29 @@ namespace HUStudio.HarmonyOS.Editor
         private const string PendingWebGLKey = "HUStudio.PendingWebGLBuild";
         private Vector2 scroll;
         private string status = "";
-        private bool showAdvancedPaths;
-        private bool showSigning;
+        [SerializeField] private bool showEnvironment = true;
+        [SerializeField] private bool showWebGL = true;
+        [SerializeField] private bool showAppSettings;
+        [SerializeField] private bool showDeviceTest = true;
+        [SerializeField] private bool showHapExport = true;
+        [SerializeField] private bool showProjectExport = true;
+        [SerializeField] private bool showAdvancedPaths;
+        [SerializeField] private bool showSigning;
         private string[] connectedDevices = new string[0];
         private int selectedDevice;
+        private sealed class ProjectImagePreview
+        {
+            public string path;
+            public Sprite sprite;
+            public Texture2D texture;
+        }
+        private static readonly Dictionary<string, ProjectImagePreview> ProjectImagePreviews =
+            new Dictionary<string, ProjectImagePreview>();
 
         [MenuItem("HarmonyOS/环境与导出...")]
         public static void Open()
         {
-            GetWindow<HUStudioExportWindow>("HarmonyOS 导出").minSize = new Vector2(560, 480);
+            GetWindow<HUStudioExportWindow>("HarmonyOS 导出").minSize = new Vector2(620, 680);
         }
 
         [InitializeOnLoadMethod]
@@ -123,19 +142,24 @@ namespace HUStudio.HarmonyOS.Editor
             var settings = HUStudioExportSettings.instance;
             scroll = EditorGUILayout.BeginScrollView(scroll);
             EditorGUILayout.LabelField("HarmonyOS 环境与导出", EditorStyles.boldLabel);
-            EditorGUILayout.HelpBox("1. 检测 DevEco 环境 → 2. 构建 WebGL → 3. 导出鸿蒙工程或 HAP", MessageType.Info);
+            EditorGUILayout.HelpBox("先准备 DevEco 环境和 WebGL 构建，再选择真机测试、导出 HAP 或导出 DevEco 工程。各模块可分别折叠。", MessageType.Info);
+
+            string toolchainReason;
+            bool pathsValid = HUStudioToolchain.Validate(out toolchainReason);
+            bool toolchainReady = HUStudioToolchain.IsVerified;
+            string webglReason;
+            bool webglReady = HUStudioExportPipeline.IsWebGLReady(settings, out webglReason);
 
             EditorGUILayout.Space(8);
-            EditorGUILayout.LabelField("步骤 1：DevEco 环境", EditorStyles.boldLabel);
+            showEnvironment = EditorGUILayout.Foldout(showEnvironment, "环境配置 · DevEco Studio", true, EditorStyles.foldoutHeader);
+            if (showEnvironment)
+            {
             DrawPath("DevEco Studio", () => HUStudioToolchain.StudioRoot, HUStudioToolchain.SetFromStudio, true);
             EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button("自动探测")) ProbeEnvironment(true);
             if (GUILayout.Button("检测环境")) ProbeEnvironment(false);
             if (GUILayout.Button("打开官方下载页")) Application.OpenURL(HUStudioToolchain.DownloadUrl);
             EditorGUILayout.EndHorizontal();
-            string toolchainReason;
-            bool pathsValid = HUStudioToolchain.Validate(out toolchainReason);
-            bool toolchainReady = HUStudioToolchain.IsVerified;
             EditorGUILayout.HelpBox(toolchainReady ? "DevEco 环境已就绪。" :
                     pathsValid ? "点击“自动探测”或“检测环境”继续。" : "环境未就绪：" + toolchainReason,
                 toolchainReady ? MessageType.Info : MessageType.Warning);
@@ -148,9 +172,12 @@ namespace HUStudio.HarmonyOS.Editor
                 DrawPath("hvigorw.js", () => HUStudioToolchain.HvigorJs, value => HUStudioToolchain.HvigorJs = value, false);
                 DrawPath("ohpm.bat", () => HUStudioToolchain.OhpmBat, value => HUStudioToolchain.OhpmBat = value, false);
             }
+            }
 
             EditorGUILayout.Space(12);
-            EditorGUILayout.LabelField("步骤 2：检测并构建 WebGL", EditorStyles.boldLabel);
+            showWebGL = EditorGUILayout.Foldout(showWebGL, "WebGL 构建 · 公共前置步骤", true, EditorStyles.foldoutHeader);
+            if (showWebGL)
+            {
             bool webglModule = BuildPipeline.IsBuildTargetSupported(BuildTargetGroup.WebGL, BuildTarget.WebGL);
             EditorGUILayout.LabelField(webglModule ? "WebGL Build Support 已安装" : "缺少 Unity WebGL Build Support");
             if (!webglModule && GUILayout.Button("打开 Unity Hub 下载页")) Application.OpenURL("https://unity.com/download");
@@ -187,13 +214,14 @@ namespace HUStudio.HarmonyOS.Editor
                     catch (Exception error) { Report(error); }
                 }
             }
-            string webglReason;
-            bool webglReady = HUStudioExportPipeline.IsWebGLReady(settings, out webglReason);
             EditorGUILayout.LabelField(webglReady ? "WebGL 已就绪" : "WebGL 未就绪：" + webglReason, EditorStyles.wordWrappedLabel);
             if (webglReady) EditorGUILayout.SelectableLabel(settings.lastWebGLDirectory, GUILayout.Height(18));
+            }
 
             EditorGUILayout.Space(12);
-            EditorGUILayout.LabelField("步骤 3：导出鸿蒙工程或 HAP", EditorStyles.boldLabel);
+            showAppSettings = EditorGUILayout.Foldout(showAppSettings, "应用信息与图标", true, EditorStyles.foldoutHeader);
+            if (showAppSettings)
+            {
             EditorGUI.BeginChangeCheck();
             settings.applicationName = EditorGUILayout.TextField("应用名称", settings.applicationName);
             settings.bundleName = EditorGUILayout.TextField("Bundle Name", settings.bundleName);
@@ -209,7 +237,7 @@ namespace HUStudio.HarmonyOS.Editor
             EditorGUILayout.Space(4);
             DrawProjectImage("闪屏图标", settings.splashGuid, value => {
                 settings.splashGuid = value; settings.Persist();
-            }, "在系统启动页居中显示；留空时使用应用图标");
+            }, "留空时不显示启动画面图片");
             Color splashColor;
             if (!ColorUtility.TryParseHtmlString(settings.splashBackgroundColor, out splashColor))
                 splashColor = Color.white;
@@ -220,43 +248,76 @@ namespace HUStudio.HarmonyOS.Editor
                 settings.splashBackgroundColor = "#" + ColorUtility.ToHtmlStringRGB(splashColor);
                 settings.Persist();
             }
+            EditorGUI.BeginChangeCheck();
+            settings.splashDisplayMode = EditorGUILayout.Popup("图片显示", settings.splashDisplayMode,
+                new[] { "等比全屏（裁切）", "拉伸全屏", "居中原尺寸" });
+            settings.splashDuration = EditorGUILayout.Slider("显示时间（秒）", settings.splashDuration, 0f, 15f);
+            settings.splashFadeDuration = EditorGUILayout.Slider("淡出时间（秒）", settings.splashFadeDuration, 0f, 5f);
+            if (EditorGUI.EndChangeCheck()) settings.Persist();
             EditorGUILayout.EndVertical();
-            using (new EditorGUI.DisabledScope(!toolchainReady || !webglReady))
+            }
+
+            showProjectExport = EditorGUILayout.Foldout(showProjectExport, "导出 DevEco 工程", true, EditorStyles.foldoutHeader);
+            if (showProjectExport)
             {
-                if (GUILayout.Button("生成鸿蒙工程", GUILayout.Height(30)))
+                EditorGUILayout.HelpBox("导出完整工程，可在 DevEco Studio 中继续配置、构建和调试。", MessageType.None);
+                using (new EditorGUI.DisabledScope(!toolchainReady || !webglReady))
                 {
-                    try
+                    if (GUILayout.Button("导出 DevEco 工程", GUILayout.Height(30)))
                     {
-                        string path = HUStudioExportPipeline.GenerateProject(settings);
-                        status = "工程已生成：" + path;
+                        try
+                        {
+                            string path = HUStudioExportPipeline.GenerateProject(settings);
+                            status = "工程已生成：" + path;
+                        }
+                        catch (Exception error) { Report(error); }
                     }
-                    catch (Exception error) { Report(error); }
+                }
+                if (!string.IsNullOrEmpty(settings.lastProjectDirectory))
+                {
+                    EditorGUILayout.SelectableLabel(settings.lastProjectDirectory, GUILayout.Height(18));
+                    if (GUILayout.Button("打开工程目录")) EditorUtility.RevealInFinder(settings.lastProjectDirectory);
                 }
             }
-            if (!string.IsNullOrEmpty(settings.lastProjectDirectory))
-                EditorGUILayout.SelectableLabel(settings.lastProjectDirectory, GUILayout.Height(18));
 
             bool projectReady = HUStudioExportPipeline.IsProjectReady(settings);
             if (!projectReady && !string.IsNullOrEmpty(settings.lastProjectDirectory))
                 EditorGUILayout.HelpBox("应用参数或 WebGL 产物已变化，请重新生成鸿蒙工程。", MessageType.Warning);
-            using (new EditorGUI.DisabledScope(!toolchainReady || !webglReady))
+            EditorGUILayout.Space(8);
+            showHapExport = EditorGUILayout.Foldout(showHapExport, "导出未签名 HAP", true, EditorStyles.foldoutHeader);
+            if (showHapExport)
             {
-                if (GUILayout.Button("直接导出未签名 HAP", GUILayout.Height(30)))
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                EditorGUILayout.LabelField("未签名 HAP", EditorStyles.boldLabel);
+                EditorGUILayout.HelpBox("供 DevEco 后续签名或其他处理。", MessageType.None);
+                using (new EditorGUI.DisabledScope(!toolchainReady || !webglReady))
                 {
-                    try
+                    if (GUILayout.Button("导出未签名 HAP", GUILayout.Height(30)))
                     {
-                        EditorUtility.DisplayProgressBar("HUStudio", "正在构建 HAP...", 0.5f);
-                        if (!projectReady) HUStudioExportPipeline.GenerateProject(settings);
-                        string hap = HUStudioToolchain.BuildUnsignedHap(settings.lastProjectDirectory, settings.outputDirectory);
-                        status = "未签名 HAP 已生成：" + hap;
+                        try
+                        {
+                            EditorUtility.DisplayProgressBar("HUStudio", "正在构建 HAP...", 0.5f);
+                            if (!projectReady) HUStudioExportPipeline.GenerateProject(settings);
+                            string hap = HUStudioToolchain.BuildUnsignedHap(settings.lastProjectDirectory, settings.outputDirectory);
+                            status = "未签名 HAP 已生成：" + hap;
+                        }
+                        catch (Exception error) { Report(error); }
+                        finally { EditorUtility.ClearProgressBar(); }
                     }
-                    catch (Exception error) { Report(error); }
-                    finally { EditorUtility.ClearProgressBar(); }
                 }
+                EditorGUILayout.EndVertical();
+                EditorGUILayout.LabelField("HAP 输出目录：" + (string.IsNullOrEmpty(settings.outputDirectory) ? "未设置" : settings.outputDirectory),
+                    EditorStyles.wordWrappedMiniLabel);
+                if (!string.IsNullOrEmpty(settings.outputDirectory) && GUILayout.Button("打开 HAP 输出目录"))
+                    EditorUtility.RevealInFinder(settings.outputDirectory);
             }
-            EditorGUILayout.Space(10);
-            EditorGUILayout.LabelField("测试包：调试构建与真机部署", EditorStyles.boldLabel);
-            EditorGUILayout.HelpBox("按顺序完成：连接手机并授权 USB 调试 → 检测测试签名 → 构建、安装并启动。此流程独立于正式签名导出。", MessageType.Info);
+
+            EditorGUILayout.Space(8);
+            showDeviceTest = EditorGUILayout.Foldout(showDeviceTest, "真机测试 · 构建、安装并启动", true, EditorStyles.foldoutHeader);
+            if (showDeviceTest)
+            {
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUILayout.HelpBox("连接鸿蒙手机并授权 USB 调试后，一键构建测试包、安装到设备并启动。", MessageType.Info);
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(connectedDevices.Length == 0 ? "未检测到设备" : "已连接 " + connectedDevices.Length + " 台设备",
                 EditorStyles.wordWrappedLabel);
@@ -272,11 +333,13 @@ namespace HUStudio.HarmonyOS.Editor
             bool autoSigningReady = HUStudioSigning.IsAutoSigningReadyFor(settings.lastProjectDirectory);
             bool installSigningReady = autoSigningReady || HUStudioSigning.Validate(out installSigningReason);
             if (autoSigningReady) installSigningReason = "DevEco 自动签名资料已就绪。";
+            var testBuildBlockers = new List<string>();
+            if (!toolchainReady) testBuildBlockers.Add("DevEco 环境未检测通过，请先点击“检测环境”");
+            if (!webglReady) testBuildBlockers.Add("WebGL 未就绪：" + webglReason);
+            if (connectedDevices.Length == 0) testBuildBlockers.Add("未检测到设备，请点击“刷新设备”");
+            if (!installSigningReady) testBuildBlockers.Add("测试签名未就绪：" + installSigningReason);
+            bool canBuildTest = testBuildBlockers.Count == 0;
             EditorGUILayout.BeginHorizontal();
-            using (new EditorGUI.DisabledScope(!toolchainReady || string.IsNullOrEmpty(settings.lastProjectDirectory)))
-            {
-                if (GUILayout.Button("自动检测测试签名")) DetectTestSigning(settings);
-            }
             using (new EditorGUI.DisabledScope(!toolchainReady || !webglReady))
             {
                 if (GUILayout.Button("首次设置：在 DevEco 中打开工程"))
@@ -291,13 +354,19 @@ namespace HUStudio.HarmonyOS.Editor
                     catch (Exception error) { Report(error); }
                 }
             }
+            using (new EditorGUI.DisabledScope(!toolchainReady || string.IsNullOrEmpty(settings.lastProjectDirectory)))
+            {
+                if (GUILayout.Button("自动检测测试签名")) DetectTestSigning(settings);
+            }
             EditorGUILayout.EndHorizontal();
-            EditorGUILayout.HelpBox(installSigningReady
-                ? "测试签名已就绪，可构建并安装。"
-                : "首次配置步骤：\n1. 点击“首次设置”打开工程；在 DevEco 右上角点击“登录”，登录华为开发者账号。\n2. 进入“文件 > 项目结构 > 项目 > 签名配置”。\n3. 选择 HarmonyOS 签名配置，勾选“自动生成签名”，点击“确定”并等待签名完成。\n4. 回到 Unity 点击“自动检测测试签名”。若仍未识别，确认 DevEco 的签名配置已写入当前生成工程的 build-profile.json5。\n\n当前状态：" + installSigningReason,
-                installSigningReady ? MessageType.Info : MessageType.Warning);
-            using (new EditorGUI.DisabledScope(!toolchainReady || !webglReady ||
-                connectedDevices.Length == 0 || !installSigningReady))
+            if (!installSigningReady)
+                EditorGUILayout.HelpBox("首次配置步骤：\n1. 点击“首次设置”打开工程；在 DevEco 右上角点击“登录”，登录华为开发者账号。\n2. 进入“文件 > 项目结构 > 项目 > 签名配置”。\n3. 选择 HarmonyOS 签名配置，勾选“自动生成签名”，点击“确定”并等待签名完成。\n4. 回到 Unity 点击“自动检测测试签名”。若仍未识别，确认 DevEco 的签名配置已写入当前生成工程的 build-profile.json5。\n\n当前状态：" + installSigningReason,
+                    MessageType.Warning);
+            EditorGUILayout.HelpBox(canBuildTest
+                ? "测试构建条件已全部满足，可以构建并安装。"
+                : "测试构建按钮已禁用：" + string.Join("；", testBuildBlockers),
+                canBuildTest ? MessageType.Info : MessageType.Warning);
+            using (new EditorGUI.DisabledScope(!canBuildTest))
             {
                 if (GUILayout.Button("构建并安装测试 HAP", GUILayout.Height(34)))
                 {
@@ -321,9 +390,13 @@ namespace HUStudio.HarmonyOS.Editor
                     finally { EditorUtility.ClearProgressBar(); }
                 }
             }
-            showSigning = EditorGUILayout.Foldout(showSigning, "签名设置", true);
+            EditorGUILayout.EndVertical();
+            }
+            showSigning = EditorGUILayout.Foldout(showSigning, "导出带签名 HAP · 本地签名资料", true, EditorStyles.foldoutHeader);
             if (showSigning)
             {
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                EditorGUILayout.HelpBox("配置本地密钥、证书和 Profile 后，可单独导出已签名 HAP。", MessageType.None);
                 if (GUILayout.Button("生成密钥与 CSR...")) HUStudioSigningWizard.Open();
                 DrawPath("密钥库 (.p12)", () => HUStudioSigning.KeyStorePath,
                     value => HUStudioSigning.KeyStorePath = value, false);
@@ -340,7 +413,7 @@ namespace HUStudio.HarmonyOS.Editor
                     signingReady ? MessageType.Info : MessageType.None);
                 using (new EditorGUI.DisabledScope(!toolchainReady || !webglReady || !signingReady))
                 {
-                    if (GUILayout.Button("直接导出已签名 HAP", GUILayout.Height(30)))
+                    if (GUILayout.Button("导出带签名 HAP", GUILayout.Height(30)))
                     {
                         try
                         {
@@ -355,15 +428,37 @@ namespace HUStudio.HarmonyOS.Editor
                         finally { EditorUtility.ClearProgressBar(); }
                     }
                 }
+                EditorGUILayout.EndVertical();
             }
             if (!string.IsNullOrEmpty(status)) EditorGUILayout.HelpBox(status, MessageType.Info);
+            EditorGUILayout.Space(8);
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.LabelField("技术支持 / 使用咨询：QQ 3152939728",
+                EditorStyles.centeredGreyMiniLabel, GUILayout.Width(230));
+            if (GUILayout.Button("复制", GUILayout.Width(48)))
+            {
+                EditorGUIUtility.systemCopyBuffer = "3152939728";
+                status = "技术支持 QQ 已复制到剪贴板。";
+            }
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.EndHorizontal();
             EditorGUILayout.EndScrollView();
         }
 
         private void OnEnable()
         {
-            if (HUStudioToolchain.IsVerified) RefreshDevices();
+            // Device enumeration starts hdc.exe, so it stays behind the explicit refresh button.
+            EditorApplication.projectChanged -= ClearProjectImagePreviews;
+            EditorApplication.projectChanged += ClearProjectImagePreviews;
         }
+
+        private void OnDisable()
+        {
+            EditorApplication.projectChanged -= ClearProjectImagePreviews;
+        }
+
+        private static void ClearProjectImagePreviews() { ProjectImagePreviews.Clear(); }
 
         private static void DrawPath(string label, Func<string> get, Action<string> set, bool folder)
         {
@@ -409,10 +504,20 @@ namespace HUStudio.HarmonyOS.Editor
 
         private void DrawProjectImage(string label, string guid, Action<string> setGuid, string description)
         {
-            string path = AssetDatabase.GUIDToAssetPath(guid ?? "");
-            Sprite sprite = string.IsNullOrEmpty(path) ? null : AssetDatabase.LoadAssetAtPath<Sprite>(path);
-            Texture2D texture = sprite == null && !string.IsNullOrEmpty(path)
-                ? AssetDatabase.LoadAssetAtPath<Texture2D>(path) : null;
+            string key = guid ?? "";
+            ProjectImagePreview cached;
+            if (!ProjectImagePreviews.TryGetValue(key, out cached))
+            {
+                string assetPath = AssetDatabase.GUIDToAssetPath(key);
+                Sprite spriteAsset = string.IsNullOrEmpty(assetPath) ? null : AssetDatabase.LoadAssetAtPath<Sprite>(assetPath);
+                Texture2D textureAsset = spriteAsset == null && !string.IsNullOrEmpty(assetPath)
+                    ? AssetDatabase.LoadAssetAtPath<Texture2D>(assetPath) : null;
+                cached = new ProjectImagePreview { path = assetPath, sprite = spriteAsset, texture = textureAsset };
+                ProjectImagePreviews[key] = cached;
+            }
+            string path = cached.path;
+            Sprite sprite = cached.sprite;
+            Texture2D texture = cached.texture;
             Rect area = GUILayoutUtility.GetRect(0, 112, GUILayout.ExpandWidth(true));
             GUI.Box(area, GUIContent.none, EditorStyles.helpBox);
             Rect preview = new Rect(area.x + 8, area.y + 8, 96, 96);
@@ -507,6 +612,29 @@ namespace HUStudio.HarmonyOS.Editor
         private const string ManifestName = "HUStudioBuild.json";
         private static readonly string[] RequiredBuildFiles =
             { "out.data", "out.framework.js", "out.loader.js", "out.wasm" };
+        private sealed class CachedImageHash
+        {
+            public long length;
+            public long modifiedTicks;
+            public string hash;
+        }
+        private static readonly Dictionary<string, CachedImageHash> ImageHashes =
+            new Dictionary<string, CachedImageHash>(StringComparer.OrdinalIgnoreCase);
+        private static string cachedFingerprintKey;
+        private static string cachedFingerprint;
+
+        static HUStudioExportPipeline()
+        {
+            EditorApplication.projectChanged += InvalidateReadinessCaches;
+            EditorBuildSettings.sceneListChanged += InvalidateReadinessCaches;
+        }
+
+        private static void InvalidateReadinessCaches()
+        {
+            cachedFingerprintKey = null;
+            cachedFingerprint = null;
+            ImageHashes.Clear();
+        }
 
         private static string[] EnabledScenes()
         {
@@ -528,14 +656,23 @@ namespace HUStudio.HarmonyOS.Editor
 
         private static string Fingerprint(HUStudioExportSettings settings)
         {
+            string[] scenes = EnabledScenes();
+            string fastKey = Application.unityVersion + "|" + string.Join("|", scenes) +
+                "|" + PlayerSettings.companyName + "|" + PlayerSettings.productName +
+                "|" + PlayerSettings.WebGL.template;
+            if (cachedFingerprint != null && cachedFingerprintKey == fastKey) return cachedFingerprint;
+            // Keep the exact historical serialization so already-exported WebGL builds
+            // remain valid when this cache is introduced.
             var input = new StringBuilder(Application.unityVersion);
-            foreach (string path in EnabledScenes())
+            foreach (string path in scenes)
                 input.Append('|').Append(path).Append(':').Append(AssetDatabase.GetAssetDependencyHash(path));
             input.Append('|').Append(PlayerSettings.companyName)
                  .Append('|').Append(PlayerSettings.productName)
                  .Append('|').Append(PlayerSettings.WebGL.template);
             using (var sha = SHA256.Create())
-                return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(input.ToString()))).Replace("-", "");
+                cachedFingerprint = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(input.ToString()))).Replace("-", "");
+            cachedFingerprintKey = fastKey;
+            return cachedFingerprint;
         }
 
         private static string ProjectImagePath(string guid)
@@ -552,9 +689,19 @@ namespace HUStudio.HarmonyOS.Editor
         {
             string path = ProjectImagePath(guid);
             if (string.IsNullOrEmpty(path)) return "";
+            var info = new FileInfo(path);
+            CachedImageHash cached;
+            if (ImageHashes.TryGetValue(path, out cached) && cached.length == info.Length &&
+                cached.modifiedTicks == info.LastWriteTimeUtc.Ticks) return cached.hash;
             using (var stream = File.OpenRead(path))
             using (var sha = SHA256.Create())
-                return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "");
+                cached = new CachedImageHash {
+                    length = info.Length,
+                    modifiedTicks = info.LastWriteTimeUtc.Ticks,
+                    hash = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "")
+                };
+            ImageHashes[path] = cached;
+            return cached.hash;
         }
 
         private static void ValidateBranding(HUStudioExportSettings settings)
@@ -575,6 +722,9 @@ namespace HUStudio.HarmonyOS.Editor
             }
             if (!System.Text.RegularExpressions.Regex.IsMatch(settings.splashBackgroundColor ?? "", @"^#[0-9a-fA-F]{6}$"))
                 throw new InvalidOperationException("闪屏背景色无效。");
+            settings.splashDisplayMode = Mathf.Clamp(settings.splashDisplayMode, 0, 2);
+            settings.splashDuration = Mathf.Clamp(settings.splashDuration, 0f, 15f);
+            settings.splashFadeDuration = Mathf.Clamp(settings.splashFadeDuration, 0f, 5f);
         }
 
         private static void CopyBranding(string project, HUStudioExportSettings settings)
@@ -583,9 +733,20 @@ namespace HUStudio.HarmonyOS.Editor
             string startIcon = Path.Combine(project, "entry", "src", "main", "resources", "base", "media", "start_icon.png");
             string iconSource = ProjectImagePath(settings.iconGuid);
             if (!string.IsNullOrEmpty(iconSource)) File.Copy(iconSource, appIcon, true);
-            string startSource = ProjectImagePath(!string.IsNullOrWhiteSpace(settings.splashGuid)
-                ? settings.splashGuid : settings.iconGuid);
-            if (!string.IsNullOrWhiteSpace(startSource)) File.Copy(startSource, startIcon, true);
+            string startSource = ProjectImagePath(settings.splashGuid);
+            string launchImage = Path.Combine(project, "entry", "src", "main", "resources", "base", "media", "launch_screen.png");
+            string emptyImage = Path.Combine(project, "entry", "src", "main", "resources", "base", "media", "empty.png");
+            // HarmonyOS constrains the system start-window icon to its own centered icon region,
+            // so keep that layer image-free. The app overlay owns image scaling and fade timing.
+            File.Copy(emptyImage, startIcon, true);
+            if (!string.IsNullOrWhiteSpace(startSource))
+            {
+                File.Copy(startSource, launchImage, true);
+            }
+            else
+            {
+                File.Copy(emptyImage, launchImage, true);
+            }
             string colorFile = Path.Combine(project, "entry", "src", "main", "resources", "base", "element", "color.json");
             File.WriteAllText(colorFile, "{\"color\":[{\"name\":\"start_window_background\",\"value\":\"" +
                 settings.splashBackgroundColor + "\"}]}", new UTF8Encoding(false));
@@ -718,7 +879,10 @@ namespace HUStudio.HarmonyOS.Editor
                     manifest.splashGuid == settings.splashGuid &&
                     manifest.iconHash == ImageHash(settings.iconGuid) &&
                     manifest.splashHash == ImageHash(settings.splashGuid) &&
-                    manifest.splashBackgroundColor == settings.splashBackgroundColor;
+                    manifest.splashBackgroundColor == settings.splashBackgroundColor &&
+                    manifest.splashDisplayMode == settings.splashDisplayMode &&
+                    Mathf.Approximately(manifest.splashDuration, settings.splashDuration) &&
+                    Mathf.Approximately(manifest.splashFadeDuration, settings.splashFadeDuration);
             }
             catch (Exception) { return false; }
         }
@@ -744,6 +908,7 @@ namespace HUStudio.HarmonyOS.Editor
                 ReplaceTokens(Path.Combine(appScope, "app.json5"), settings);
                 ReplaceTokens(Path.Combine(appScope, "resources", "base", "element", "string.json"), settings);
                 ReplaceTokens(Path.Combine(entry, "src", "main", "resources", "base", "element", "string.json"), settings);
+                ReplaceTokens(Path.Combine(entry, "src", "main", "ets", "pages", "Index.ets"), settings);
                 CopyBranding(stage, settings);
                 if (!File.Exists(Path.Combine(entry, "libs", "arm64-v8a", "libufhn.so")))
                     throw new InvalidDataException("DevEco 模板缺少 libufhn.so。");
@@ -767,7 +932,10 @@ namespace HUStudio.HarmonyOS.Editor
                         splashGuid = settings.splashGuid,
                         iconHash = ImageHash(settings.iconGuid),
                         splashHash = ImageHash(settings.splashGuid),
-                        splashBackgroundColor = settings.splashBackgroundColor
+                        splashBackgroundColor = settings.splashBackgroundColor,
+                        splashDisplayMode = settings.splashDisplayMode,
+                        splashDuration = settings.splashDuration,
+                        splashFadeDuration = settings.splashFadeDuration
                     }, true), new UTF8Encoding(false));
                 string finalPath = Path.Combine(outputRoot, "DevEcoProject-" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
                 if (Directory.Exists(finalPath)) finalPath += "-" + Guid.NewGuid().ToString("N").Substring(0, 6);
@@ -871,7 +1039,13 @@ namespace HUStudio.HarmonyOS.Editor
             contents = contents.Replace("__BUNDLE_NAME__", settings.bundleName)
                 .Replace("__VERSION_NAME__", settings.versionName.Replace("'", ""))
                 .Replace("__VERSION_CODE__", settings.versionCode.ToString())
-                .Replace("__APP_NAME__", settings.applicationName.Replace("\\", "\\\\").Replace("\"", "\\\""));
+                .Replace("__APP_NAME__", settings.applicationName.Replace("\\", "\\\\").Replace("\"", "\\\""))
+                .Replace("__SPLASH_DURATION_MS__", Mathf.RoundToInt(settings.splashDuration * 1000f).ToString())
+                .Replace("__SPLASH_FADE_MS__", Mathf.RoundToInt(settings.splashFadeDuration * 1000f).ToString())
+                .Replace("__SPLASH_FIT__", settings.splashDisplayMode == 1 ? "ImageFit.Fill" :
+                    settings.splashDisplayMode == 2 ? "ImageFit.None" : "ImageFit.Cover")
+                .Replace("__SPLASH_ENABLED__", string.IsNullOrWhiteSpace(settings.splashGuid) ? "false" : "true")
+                .Replace("__SPLASH_BACKGROUND__", settings.splashBackgroundColor);
             File.WriteAllText(file, contents, new UTF8Encoding(false));
         }
 

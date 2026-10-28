@@ -8,6 +8,7 @@ import { window } from '@kit.ArkUI';
 @Component
 struct Index {
   @State imeVisible: boolean = false;
+  @State splashOpacity: number = 1;
   @State canvasOffsetVp: number = 0;
   // Keep a hidden character so Backspace still produces onChange for prefilled Unity fields.
   @State imeValue: string = '\u200B';
@@ -123,6 +124,22 @@ struct Index {
         .width('100%')
         .height('100%')
         .translate({ y: this.canvasOffsetVp })
+      if (__SPLASH_ENABLED__) {
+        Image($r('app.media.launch_screen'))
+          .width('100%')
+          .height('100%')
+          .objectFit(__SPLASH_FIT__)
+          .backgroundColor('__SPLASH_BACKGROUND__')
+          .opacity(this.splashOpacity)
+          .onAppear(() => {
+            setTimeout(() => {
+              animateTo({ duration: __SPLASH_FADE_MS__, curve: Curve.EaseOut }, () => {
+                this.splashOpacity = 0;
+              });
+            }, __SPLASH_DURATION_MS__);
+          })
+          .hitTestBehavior(HitTestMode.None)
+      }
       if (this.imeVisible) {
         TextInput({ text: this.imeValue, controller: this.imeController })
           .id('UnityDemoIme')
@@ -140,6 +157,7 @@ struct Index {
           .onSubmit(() => sdk.inputKey(13))
       }
     }.width('100%').height('100%')
+      .backgroundColor('__SPLASH_BACKGROUND__')
       .onAreaChange((oldArea, newArea) => {
         this.canvasHeightPx = vp2px(Number(newArea.height));
         this.updateCanvasOffset();
