@@ -1,0 +1,7 @@
+*.so binary
+*.bytes binary
+*.unitypackage binary
+*.zip binary
+*.otf binary
+*.png binary
+*.wav binary
