@@ -13,7 +13,6 @@
 
 1. **Git / UPM**：Unity 菜单 **Window > Package Manager**，点击 **+ > Add package from git URL**，输入 `https://github.com/someone88-tech/HUStudio.git`。本机需要安装 Git。安装后在该包的 **Samples** 标签导入 **Quick Start**。
 2. **unitypackage**：从仓库 `Releases~/0.1.2` 下载 `HUStudioUnitySDK-0.1.2.unitypackage`，Unity 菜单 **Assets > Import Package > Custom Package** 导入。示例位于 `Assets/HUStudioUnitySDK/Samples/QuickStart`。
-3. **完整工程**：解压 `HUStudioUnitySDK-0.1.2-SampleProject.zip`，用 Unity Hub 打开解压后的工程目录。该工程已包含插件和 Quick Start 示例。
 
 已有 UPM 包的工程不要再导入同一版本的 `.unitypackage`，否则会产生重复程序集。
 
